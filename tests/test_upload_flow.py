@@ -106,7 +106,7 @@ class UploadFlowTests(unittest.IsolatedAsyncioTestCase):
     async def test_folder_selection_checks_current_queue(self):
         self.ns["_safe_callback_answer"] = AsyncMock(return_value=True)
         self.ns["_private_ui"] = AsyncMock(return_value=True)
-        self.ns["USER_DRIVE"] = SimpleNamespace(require_folder=object())
+        self.ns["USER_DRIVE"] = SimpleNamespace(select=object())
         self.ns["_drive_call"] = AsyncMock(return_value={"id": "folder-1", "name": "محاضرات"})
         self.ns["ask_next"] = AsyncMock()
         cq = SimpleNamespace(
@@ -122,6 +122,8 @@ class UploadFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(item["target_name"], "محاضرات")
         self.ns["ask_next"].assert_awaited_once()
         self.ns["_drive_call"].assert_awaited_once()
+        self.assertEqual(self.ns["_drive_call"].await_args.args[0],
+                         self.ns["USER_DRIVE"].select)
 
     async def test_stale_folder_button_does_not_change_queue(self):
         self.ns["_safe_callback_answer"] = AsyncMock(return_value=True)
