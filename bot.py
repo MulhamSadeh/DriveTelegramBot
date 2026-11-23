@@ -431,13 +431,17 @@ async def on_upload_folder_button(update, ctx):
         else:
             total = len(queue)
             await cq.message.reply_text(f"⚡ عم احفظ {total} ملفات في «{selected['name']}».")
-            while queue:
+            for _ in range(total):
+                if not queue:
+                    break
                 pending = queue[0]
                 pending["target_folder"] = selected["id"]
                 pending["target_name"] = selected["name"]
                 if not await _finish_queued_file(ctx, chat_id, ud, None):
                     return  # Failed file remains in queue with an explicit retry button.
             await cq.message.reply_text(f"✅ انحفظت الملفات الـ {total} بنجاح.")
+            # Files arriving while the batch runs need a fresh folder prompt.
+            await ask_next(ctx, chat_id, ud)
     elif action == "upadd":
         await _drive_call(USER_DRIVE.require_folder, uid, parts[2], display)
         ud.pop("renaming", None)
