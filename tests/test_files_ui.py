@@ -210,6 +210,9 @@ class FileExperienceTests(unittest.IsolatedAsyncioTestCase):
             root, folder, active, [], False, ["ملفاتي", "محاضرات"],
         ))
         self.ns["BadRequest"] = Exception
+        self.ns["_item_button"] = lambda text, action, ident: Button(
+            text, callback_data=f"{action}:{ident}"
+        )
         query = SimpleNamespace(edit_message_text=AsyncMock())
         update = SimpleNamespace(
             callback_query=query, effective_user=SimpleNamespace(id=123, full_name="Student"),
