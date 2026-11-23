@@ -8,11 +8,11 @@ Telegram bot saves any file sent to it into a Google Drive folder. Creates folde
 - Rename after upload (inline button)
 - Status: `/status` or the "📊 الحالة" button
 - Each Telegram user gets a separate managed Drive root folder (under the bot's existing main Drive folder)
-- Compact Arabic reply keyboard: 📁 ملفاتي, 📤 رفع ملف, 🕘 آخر ملفاتي, 🔎 بحث عن ملف, ❓ طريقة الاستخدام; folder controls are contextual within the browser (legacy /newfolder and /status remain).
+- Compact Arabic reply keyboard: 📤 رفع ملف and 📁 ملفاتي; recent files and search are inside the browser, with instructions under /help; folder controls are contextual within the browser (legacy /newfolder and /status remain).
 - One-tap original-name upload, optional rename, one-tap bulk save for pending files, /cancel for prompts, and retry after failed uploads without re-sending.
 - Browse folders/files with inline buttons, select upload destination, create nested folders, rename, and move items to Google Drive Trash after confirmation
 - `/files` browse your managed files, `/newfolder <name>` create inside the selected folder and switch to it, `/folder` open the file browser
-- The upload picker opens in the last selected folder and shows folders only. "✅ احفظ بهالمجلد" saves there with one tap, and the selection is persisted in `drivebot.settings` across Render restarts.
+- The upload picker opens in the last selected folder and shows folders only. "✅ احفظ هون بالاسم الأصلي" saves there with one tap, and the selection is persisted in `drivebot.settings` across Render restarts.
 - The file browser has a shortcut to the active upload folder, plus folder rename, back/home navigation and file links
 - `/skip` and `/skipall` still work; file naming now also has inline buttons
 
@@ -35,7 +35,7 @@ Set `ADMIN_IDS` (comma-separated Telegram IDs, get yours from @userinfobot).
 ## Setup
 1. Create bot with @BotFather -> `BOT_TOKEN`
 2. Google Cloud Console -> enable Drive API -> OAuth client (Desktop app) -> `credentials.json`
-3. Run once locally (`pip install -r requirements.txt`, set the env vars below, `python bot.py`) -> browser login -> `token.json`
+3. Run `pip install -r requirements.txt` and `python drive_auth.py` locally next to `credentials.json`. Sign in to the Drive account that owns the bot’s files. This writes `token.json` without starting Telegram. If Google later reports `invalid_grant`, repeat this step with the same OAuth client and account, replace `GOOGLE_TOKEN_JSON` on the active Render service and redeploy.
 4. Database: schema `drivebot` (tables `users`, `settings`) in Supabase Postgres. Use the Session pooler connection string as `DATABASE_URL`.
 5. Deploy (Railway): start command `python bot.py`, set variables:
 

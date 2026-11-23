@@ -26,7 +26,7 @@ class NetworkError(Exception):
 SOURCE = Path(__file__).resolve().parents[1] / "bot.py"
 WANTED = {
     "ask_next", "_finish_queued_file", "_safe_callback_answer",
-    "on_upload_folder_button", "_welcome_text", "cancel_command",
+    "on_upload_folder_button", "_welcome_text", "cancel_command", "upload_help",
 }
 
 
@@ -62,8 +62,25 @@ class UploadFlowTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_welcome_explains_voice_folders_and_identity(self):
         welcome = self.ns["_welcome_text"]()
-        for phrase in ("Ctrl+Tea", "فويس", "المجلد", "الاسم الأصلي"):
+        for phrase in ("Ctrl+Tea", "فويس", "المجلد", "ملفاتي"):
             self.assertIn(phrase, welcome)
+
+    async def test_upload_entry_shows_first_step_without_drive(self):
+        self.ns["_private_ui"] = AsyncMock(return_value=True)
+        self.ns["_menu_keyboard"] = lambda: "buttons"
+        msg = SimpleNamespace(reply_text=AsyncMock())
+        ctx = SimpleNamespace(user_data={"searching_files": True})
+        await self.ns["upload_help"](SimpleNamespace(effective_message=msg), ctx)
+        self.assertIn("١ من ٢", msg.reply_text.await_args.args[0])
+        self.assertNotIn("searching_files", ctx.user_data)
+
+    async def test_upload_entry_resumes_waiting_file(self):
+        self.ns["_private_ui"] = AsyncMock(return_value=True)
+        self.ns["ask_next"] = AsyncMock()
+        ctx = SimpleNamespace(user_data={"queue": [self._item()]})
+        update = SimpleNamespace(effective_chat=SimpleNamespace(id=77))
+        await self.ns["upload_help"](update, ctx)
+        self.ns["ask_next"].assert_awaited_once_with(ctx, 77, ctx.user_data)
 
     async def test_first_prompt_is_folder_picker(self):
         picker = AsyncMock()

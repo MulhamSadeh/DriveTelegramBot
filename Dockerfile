@@ -7,7 +7,7 @@ COPY --from=api /usr/local/bin/telegram-bot-api /usr/local/bin/telegram-bot-api
 WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-COPY bot.py user_drive.py standby.py start.sh ./
+COPY bot.py drive_auth.py user_drive.py standby.py start.sh ./
 RUN python -m py_compile bot.py user_drive.py standby.py
 COPY tests ./tests
 RUN python -m unittest discover -s tests -v

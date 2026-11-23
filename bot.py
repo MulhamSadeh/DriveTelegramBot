@@ -19,7 +19,7 @@ Flow:
   - admin: /admin (users, ban/unban, approval mode), /ban <id>, /unban <id>
 Download limit: 20MB (cloud Bot API) or 2GB with BOT_API_URL (local Bot API server).
 """
-import asyncio, os, re, json, datetime, mimetypes, tempfile, traceback, time
+import asyncio, os, re, datetime, mimetypes, tempfile, traceback, time
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from telegram import (
@@ -32,16 +32,14 @@ from telegram.ext import (
 from telegram.error import NetworkError, TimedOut, BadRequest
 from googleapiclient.errors import HttpError
 from user_drive import UserDrive, FOLDER_MIME, FolderAccessError, safe_name
-from google.auth.transport.requests import Request
-from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import InstalledAppFlow
-from googleapiclient.discovery import build
+from google.auth.exceptions import RefreshError
+from drive_auth import drive_service
 from googleapiclient.http import MediaFileUpload
 
 BOT_TOKEN = os.environ["BOT_TOKEN"]
 DATABASE_URL = os.environ["DATABASE_URL"]
 DEFAULT_FOLDER = os.environ.get("FOLDER_NAME", "Telegram Uploads")
-SCOPES = ["https://www.googleapis.com/auth/drive.file"]
+DRIVE_AUTH_NOTICE = "ربط Google Drive بحاجة لتجديد من فريق Ctrl+Tea. جرّب بعد ما يتجدّد الربط."
 STATUS_BTN = "📊 الحالة"
 FILES_BTN = "📁 ملفاتي"
 NEW_FOLDER_BTN = "➕ مجلد جديد"
@@ -124,24 +122,6 @@ def label(rec):
 
 
 # ---------- Google Drive ----------
-def drive_service():
-    creds = None
-    tok = os.environ.get("GOOGLE_TOKEN_JSON")
-    if tok:
-        creds = Credentials.from_authorized_user_info(json.loads(tok), SCOPES)
-    elif os.path.exists("token.json"):
-        creds = Credentials.from_authorized_user_file("token.json", SCOPES)
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
-            creds = InstalledAppFlow.from_client_secrets_file("credentials.json", SCOPES).run_local_server(port=0)
-        if not tok:
-            with open("token.json", "w") as f:
-                f.write(creds.to_json())
-    return build("drive", "v3", credentials=creds)
-
-
 drive = drive_service()
 
 
@@ -226,7 +206,7 @@ async def ask_next(ctx, chat_id, ud):
         return
     await ctx.bot.send_message(
         chat_id,
-        f"📁 {item['target_name']}\n"
+        f"✏️ تغيير الاسم قبل الحفظ\n📁 {item['target_name']}\n"
         f"✏️ اكتب اسم «{item['label']}» الجديد، أو احفظ بالاسم الأصلي.\n"
         "للإلغاء: /cancel",
         reply_markup=kb_status(item["token"]),
@@ -296,7 +276,7 @@ async def _show_upload_folders(ctx, chat_id, item, folder_id=None, page=0, cq=No
         rows.append(pager)
 
     rows.append([InlineKeyboardButton(
-        "⚡ حفظ بالاسم الأصلي", callback_data=f"upfast:{token}:{folder['id']}",
+        "✅ احفظ هون بالاسم الأصلي", callback_data=f"upfast:{token}:{folder['id']}",
     )])
     rows.append([InlineKeyboardButton(
         "✏️ تغيير الاسم قبل الحفظ", callback_data=f"upset:{token}:{folder['id']}",
@@ -317,9 +297,9 @@ async def _show_upload_folders(ctx, chat_id, item, folder_id=None, page=0, cq=No
     if len(path) > 130:
         path = "… / " + " / ".join(breadcrumbs[-3:])
     title = (
-        f"وين بدك تحفظ «{item['label']}»؟\n"
+        f"٢ من ٢ · وين بدك تحفظ «{item['label']}»؟\n"
         f"📍 {path}\n"
-        f"📂 مجلدات: {len(folders)} | 📄 ملفات: {len(files)}\n\n"
+        "\n"
         + ("افتح المجلد لتشوف جوّاته. الحفظ بالمجلد المكتوب فوق."
            if folders else "ما في مجلدات فرعية. احفظ هون أو أنشئ مجلد.")
         + ("\n(عم نعرض أول 1000 عنصر)" if more else "")
@@ -612,7 +592,9 @@ async def upload_item(ctx, chat_id, ud, item, chosen_name):
         return True
     except Exception as exc:
         traceback.print_exc()
-        if isinstance(exc, (TimedOut, NetworkError)):
+        if isinstance(exc, RefreshError):
+            notice = DRIVE_AUTH_NOTICE
+        elif isinstance(exc, (TimedOut, NetworkError)):
             notice = "اتصال Telegram تأخر. جرّب مرة تانية."
         elif isinstance(exc, HttpError):
             notice = "Drive ما ردّ هالمرة. جرّب بعد شوي."
@@ -637,12 +619,9 @@ async def upload_item(ctx, chat_id, ud, item, chosen_name):
 # ---------- handlers ----------
 def _welcome_text():
     return (
-        "☕ أهلاً فيك ببوت Ctrl+Tea\n\n"
-        "احفظ ملفاتك والفويسات على Google Drive بمجلدات خاصة فيك.\n"
-        "📤 ابعت ملف أو فويس، اختار المجلد، واضغط «حفظ بالاسم الأصلي» "
-        "أو غيّر الاسم.\n"
-        "📁 من «ملفاتي» بتتصفّح المجلدات وبتوصل لروابط ملفاتك.\n\n"
-        "— فريق Ctrl+Tea"
+        "☕ أهلاً فيك بـ Ctrl+Tea Drive\n\n"
+        "📤 رفع ملف — ابعت ملف أو فويس، وبعدين اختار المجلد.\n"
+        "📁 ملفاتي — تصفّح مجلداتك وافتح ملفاتك."
     )
 
 async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -655,12 +634,12 @@ async def help_command(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.effective_message.reply_text(
         "❓ طريقة الاستخدام\n\n"
         "📤 ابعت ملف أو صورة أو فويس للبوت.\n"
-        "اختار المجلد، واضغط «⚡ حفظ بالاسم الأصلي»، أو غيّر الاسم قبل الرفع.\n"
+        "اختار المجلد، واضغط «✅ احفظ هون بالاسم الأصلي»، أو غيّر الاسم قبل الرفع.\n"
         "فيك تحفظ كل الملفات المنتظرة بنفس المجلد بضغطة.\n\n"
         "📁 ملفاتي: افتح مجلداتك، اضغط على الملف لتشوف تفاصيله، "
         "أو على 🔗 حتى تفتح رابطه مباشرة.\n"
         "➕ لإنشاء مجلد، افتح المكان المطلوب واضغط «مجلد جديد».\n"
-        "🕘 آخر ملفاتي، 🔎 بحث عن ملف، /status للحالة.\n"
+        "من ملفاتي اضغط «الأحدث» أو «بحث». للحالة اكتب /status.\n"
         "للإلغاء: /cancel\n"
         "الحذف بيحتاج تأكيد، والملفات بتنقل لسلة Drive.",
         reply_markup=_menu_keyboard(update.effective_user.id),
@@ -924,7 +903,7 @@ async def on_button(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 # ---------- per-user browser ----------
 def _menu_keyboard(uid=None):
     # Keep the persistent keyboard focused; contextual folder tools live inside the browser.
-    rows = [[FILES_BTN, UPLOAD_BTN], [RECENT_BTN, SEARCH_BTN], [HELP_BTN]]
+    rows = [[UPLOAD_BTN, FILES_BTN]]
     return ReplyKeyboardMarkup(rows, resize_keyboard=True)
 
 async def _drive_call(fn, *args):
@@ -1132,12 +1111,19 @@ async def search_command(update, ctx):
 async def upload_help(update, ctx):
     if not await _private_ui(update):
         return
-    person = update.effective_user
-    active = await _drive_call(USER_DRIVE.current, person.id, person.full_name)
+    ud = ctx.user_data
+    for key in ("creating_folder_in", "creating_for_upload", "renaming", "searching_files"):
+        ud.pop(key, None)
+    if ud.get("queue"):
+        if ud["queue"][0].get("_uploading"):
+            await update.effective_message.reply_text("عم نرفع ملفك هلّق.")
+        else:
+            await ask_next(ctx, update.effective_chat.id, ud)
+        return
     await update.effective_message.reply_text(
-        f"📤 ابعت الملف أو الفويس هون.\n"
-        f"📁 مجلد الرفع الحالي: «{active['name']}»\n"
-        "بعد الإرسال اضغط «⚡ حفظ بالاسم الأصلي»، أو غيّر المجلد والاسم.", reply_markup=_menu_keyboard(person.id),
+        "١ من ٢ · ابعت الملف أو الفويس هون.\n"
+        "بالخطوة الجاية بتختار وين تحفظه.",
+        reply_markup=_menu_keyboard(),
     )
 
 
@@ -1397,7 +1383,11 @@ async def on_error(update, ctx: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id if isinstance(update, Update) and update.effective_chat else None
     if not chat_id:
         return
-    if isinstance(err, (TimedOut, NetworkError)):
+    if isinstance(err, RefreshError):
+        message = DRIVE_AUTH_NOTICE
+        if ctx.user_data and ctx.user_data.get("queue"):
+            message += "\nوقت يرجع Drive، اضغط «📤 رفع ملف» لتكمّل."
+    elif isinstance(err, (TimedOut, NetworkError)):
         message = "الاتصال تأخر شوي. جرّب مرة تانية."
     elif isinstance(err, FolderAccessError):
         message = "ما عندك صلاحية لهالمجلد."
