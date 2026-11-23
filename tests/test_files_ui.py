@@ -131,7 +131,7 @@ class FileExperienceTests(unittest.IsolatedAsyncioTestCase):
         ]
         self.ns["_private_ui"] = AsyncMock(return_value=True)
         self.ns["_drive_call"] = AsyncMock(return_value=(
-            root, folder, {"name": folder["name"]}, contents, False,
+            root, folder, {"id": "sub", "name": folder["name"]}, contents, False,
             ["ملفاتي", "محاضرات", "المحاضرة الأولى"],
         ))
         self.ns["_item_button"] = lambda text, action, ident: Button(
@@ -156,7 +156,7 @@ class FileExperienceTests(unittest.IsolatedAsyncioTestCase):
                             for row in rows for x in row))
         update.effective_message.reply_text.assert_not_awaited()
 
-    async def test_upload_picker_opens_nested_folder_and_shows_existing_files(self):
+    async def test_upload_picker_shows_only_folders_and_breadcrumb(self):
         root = {"id": "root", "name": "ملفاتي"}
         folder = {"id": "sub", "name": "محاضرات", "parents": ["root"]}
         folder_item = {"id": "subsub", "name": "نظم منطقية"}
@@ -176,11 +176,54 @@ class FileExperienceTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("ملفات: 1", text[0])
         rows = kwargs["reply_markup"].rows
         self.assertTrue(any(x.callback_data == "upnav:42:subsub" for row in rows for x in row))
-        self.assertTrue(any(x.callback_data == "upset:42:subsub" for row in rows for x in row))
-        self.assertTrue(any(x.url == "https://drive.google.com/file/d/existing_pdf/view"
-                            for row in rows for x in row))
+        self.assertFalse(any(x.callback_data == "upset:42:subsub" for row in rows for x in row))
+        self.assertFalse(any(x.url for row in rows for x in row))
+        self.assertTrue(any(x.callback_data == "upset:42:sub" for row in rows for x in row))
         ctx.bot.send_message.assert_not_awaited()
 
+
+    async def test_upload_picker_starts_at_remembered_folder(self):
+        root = {"id": "root", "name": "ملفاتي"}
+        selected = {"id": "active", "name": "فويسات", "parents": ["root"]}
+        self.ns["USER_DRIVE"] = SimpleNamespace(current=object())
+        self.ns["_drive_call"] = AsyncMock(side_effect=[
+            selected,
+            (root, selected, [], [], False, ["ملفاتي", "فويسات"]),
+        ])
+        self.ns["BadRequest"] = Exception
+        ctx = SimpleNamespace(bot=SimpleNamespace(send_message=AsyncMock()))
+        item = {"token": "42", "label": "فويس.ogg", "uid": 123, "owner_name": "Student"}
+        await self.ns["_show_upload_folders"](ctx, 77, item)
+        self.assertEqual(item["recent_target"]["id"], "active")
+        self.assertEqual(self.ns["_drive_call"].await_args_list[0].args[0],
+                         self.ns["USER_DRIVE"].current)
+        markup = ctx.bot.send_message.await_args.kwargs["reply_markup"]
+        self.assertTrue(any(x.callback_data == "upset:42:active"
+                            for row in markup.rows for x in row))
+
+    async def test_browser_can_jump_to_selected_folder_and_rename_current(self):
+        root = {"id": "root", "name": "ملفاتي"}
+        folder = {"id": "other", "name": "محاضرات", "parents": ["root"]}
+        active = {"id": "active", "name": "فويسات"}
+        self.ns["_private_ui"] = AsyncMock(return_value=True)
+        self.ns["_drive_call"] = AsyncMock(return_value=(
+            root, folder, active, [], False, ["ملفاتي", "محاضرات"],
+        ))
+        self.ns["BadRequest"] = Exception
+        self.ns["_item_button"] = lambda text, action, ident: Button(
+            text, callback_data=f"{action}:{ident}"
+        )
+        query = SimpleNamespace(edit_message_text=AsyncMock())
+        update = SimpleNamespace(
+            callback_query=query, effective_user=SimpleNamespace(id=123, full_name="Student"),
+            effective_message=SimpleNamespace(reply_text=AsyncMock()),
+        )
+        await self.ns["show_browser"](update, None, "other")
+        markup = query.edit_message_text.await_args.kwargs["reply_markup"]
+        actions = [x.callback_data for row in markup.rows for x in row]
+        self.assertIn("nav:active", actions)
+        self.assertIn("ren:other", actions)
+        self.assertIn("trash:other", actions)
 
 if __name__ == "__main__":
     unittest.main()

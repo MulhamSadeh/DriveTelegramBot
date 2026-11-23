@@ -239,17 +239,17 @@ def _upload_folder_snapshot(uid, display, folder_id):
 
 async def _show_upload_folders(ctx, chat_id, item, folder_id=None, page=0, cq=None):
     if not folder_id:
+        # Start where the user last saved a file, including after a bot restart.
         recent = await _drive_call(USER_DRIVE.current, item["uid"], item["owner_name"])
-        root_folder = await _drive_call(USER_DRIVE.ensure_root, item["uid"], item["owner_name"])
         item["recent_target"] = recent
-        folder_id = root_folder["id"]
+        folder_id = recent["id"]
     root, folder, folders, files, more, breadcrumbs = await _drive_call(
         _upload_folder_snapshot, item["uid"], item["owner_name"], folder_id,
     )
     token = str(item["token"])
-    contents = [("folder", f) for f in folders] + [("file", f) for f in files]
+    # This picker selects a destination; files remain available under 'ملفاتي'.
     page_size = 7
-    last = max(0, (len(contents) - 1) // page_size)
+    last = max(0, (len(folders) - 1) // page_size)
     page = max(0, min(int(page), last))
     rows = []
 
@@ -268,25 +268,14 @@ async def _show_upload_folders(ctx, chat_id, item, folder_id=None, page=0, cq=No
     quick = item.get("recent_target")
     if quick and quick["id"] != folder["id"]:
         rows.append([InlineKeyboardButton(
-            f"📍 آخر مجلد: {quick['name'][:26]}",
+            f"📌 مجلد الرفع الحالي: {quick['name'][:22]}",
             callback_data=f"upset:{token}:{quick['id']}",
         )])
 
-    for kind, child in contents[page * page_size: (page + 1) * page_size]:
-        if kind == "folder":
-            rows.append([
-                InlineKeyboardButton(
-                    f"📂 {child['name'][:29]}", callback_data=f"upnav:{token}:{child['id']}",
-                ),
-                InlineKeyboardButton(
-                    "✅ اختار", callback_data=f"upset:{token}:{child['id']}",
-                ),
-            ])
-        else:
-            rows.append([InlineKeyboardButton(
-                f"📄 {child.get('name', 'ملف')[:38]}",
-                url=drive_file_url(child["id"]),
-            )])
+    for child in folders[page * page_size: (page + 1) * page_size]:
+        rows.append([InlineKeyboardButton(
+            f"📂 {child['name'][:38]}", callback_data=f"upnav:{token}:{child['id']}",
+        )])
 
     pager = []
     if page:
@@ -301,7 +290,7 @@ async def _show_upload_folders(ctx, chat_id, item, folder_id=None, page=0, cq=No
         rows.append(pager)
 
     rows.append([InlineKeyboardButton(
-        "✅ احفظ الملف هون", callback_data=f"upset:{token}:{folder['id']}",
+        "✅ احفظ بهالمجلد", callback_data=f"upset:{token}:{folder['id']}",
     )])
     rows.append([InlineKeyboardButton(
         "➕ مجلد جديد هون", callback_data=f"upadd:{token}:{folder['id']}",
@@ -314,8 +303,8 @@ async def _show_upload_folders(ctx, chat_id, item, folder_id=None, page=0, cq=No
         f"وين بدك تحفظ «{item['label']}»؟\n"
         f"📍 {path}\n"
         f"📂 مجلدات: {len(folders)} | 📄 ملفات: {len(files)}\n\n"
-        + ("اضغط على مجلد لتشوف محتواه، أو اختار مكان الرفع."
-           if contents else "المجلد فاضي. فيك تحفظ هون أو تعمل مجلد جديد.")
+        + ("افتح المجلد اللي بدك ياه، وبعدها اضغط «احفظ بهالمجلد»."
+           if folders else "ما في مجلدات جوّا هون. فيك تحفظ هون أو تعمل مجلد جديد.")
         + ("\n(عم نعرض أول 1000 عنصر)" if more else "")
     )
     markup = InlineKeyboardMarkup(rows)
@@ -382,7 +371,8 @@ async def on_upload_folder_button(update, ctx):
     elif action == "upnav":
         await _show_upload_folders(ctx, cq.message.chat_id, item, parts[2], 0, cq)
     elif action == "upset":
-        selected = await _drive_call(USER_DRIVE.require_folder, uid, parts[2], display)
+        selected = await _drive_call(USER_DRIVE.select, uid, parts[2], display)
+        item["recent_target"] = selected
         item["target_folder"] = selected["id"]
         item["target_name"] = selected["name"]
         try:
@@ -746,6 +736,7 @@ async def on_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text("هالطلب انتهى. ابعت الملف من جديد.")
                 return
             made = await _drive_call(USER_DRIVE.create_folder, person.id, parent, text, person.full_name)
+            await _drive_call(USER_DRIVE.select, person.id, made["id"], person.full_name)
             queue[0]["target_folder"] = made["id"]
             queue[0]["target_name"] = made["name"]
             ud.pop("creating_for_upload", None)
@@ -770,11 +761,15 @@ async def on_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         for x in ud.get("uploaded", []):
             if x["id"] == fid:
                 x["name"] = renamed["name"]
-        await update.message.reply_text(
-            f"تغيّر الاسم لـ «{renamed['name']}».\n"
-            f"رابطه: {drive_file_url(fid)}",
-            reply_markup=kb_after_upload(fid),
-        )
+        if old.get("mimeType") == FOLDER_MIME:
+            await update.message.reply_text(f"✅ صار اسم المجلد «{renamed['name']}».")
+            await show_browser(update, ctx, fid)
+        else:
+            await update.message.reply_text(
+                f"تغيّر الاسم لـ «{renamed['name']}».\n"
+                f"رابطه: {drive_file_url(fid)}",
+                reply_markup=kb_after_upload(fid),
+            )
         await ask_next(ctx, chat_id, ud)
         return
 
@@ -886,6 +881,11 @@ async def show_browser(update, ctx, folder_id=None, page=0):
             InlineKeyboardButton("🏠 الرئيسية", callback_data="home"),
         ])
 
+    if current["id"] != folder["id"]:
+        rows.append([InlineKeyboardButton(
+            "📌 مجلد الرفع الحالي", callback_data=f"nav:{current['id']}",
+        )])
+
     # Every folder is a button. On tap, replace this message with its contents.
     # Every file has a detail button plus a direct Drive link.
     for meta in items[page * limit: (page + 1) * limit]:
@@ -926,9 +926,10 @@ async def show_browser(update, ctx, folder_id=None, page=0):
         "🔄 تحديث المحتوى", callback_data=f"nav:{folder['id']}",
     )])
     if folder["id"] != root["id"]:
-        deletion = _item_button("🗑 حذف هالمجلد", "trash", folder["id"])
-        if deletion:
-            rows.append([deletion])
+        rename = _item_button("✏️ تغيير اسم المجلد", "ren", folder["id"])
+        deletion = _item_button("🗑 حذف المجلد", "trash", folder["id"])
+        if rename and deletion:
+            rows.append([rename, deletion])
 
     path = " / ".join(breadcrumbs)
     if len(path) > 130:
@@ -1034,8 +1035,8 @@ async def upload_help(update, ctx):
     person = update.effective_user
     active = await _drive_call(USER_DRIVE.current, person.id, person.full_name)
     await update.effective_message.reply_text(
-        f"📤 ابعت الملف هون، ورح يروح على «{active['name']}».\n"
-        "إذا بدك تغيّر المجلد، افتح «ملفاتي».", reply_markup=_menu_keyboard(person.id),
+        f"📤 ابعت الملف هون، ورح يفتحلك «{active['name']}» أول شي.\n"
+        "فيك تحفظ فيه فوراً، أو تتنقّل لمجلد تاني. اختيارك بينحفظ للملف الجاي.", reply_markup=_menu_keyboard(person.id),
     )
 
 
