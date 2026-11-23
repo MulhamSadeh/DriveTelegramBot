@@ -189,12 +189,13 @@ def kb_after_upload(file_id):
     ])
 
 
-def kb_status():
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("⚡ حفظ بالاسم الأصلي", callback_data="skipone"),
-         InlineKeyboardButton("⚡ حفظ الباقي", callback_data="skipall")],
-        [InlineKeyboardButton("❌ إلغاء هالملف", callback_data="upcancel_name")],
-    ])
+def kb_status(token=None):
+    rows = [[InlineKeyboardButton("⚡ حفظ بالاسم الأصلي", callback_data="skipone"),
+             InlineKeyboardButton("⚡ حفظ الباقي", callback_data="skipall")]]
+    if token is not None:
+        rows.append([InlineKeyboardButton("❌ إلغاء هالملف",
+                                          callback_data=f"upcancel:{token}")])
+    return InlineKeyboardMarkup(rows)
 
 def status_text(ud, folder_name=None):
     qd = ud.get("queue", [])
@@ -224,7 +225,7 @@ async def ask_next(ctx, chat_id, ud):
         f"📁 {item['target_name']}\n"
         f"✏️ اكتب اسم «{item['label']}» الجديد، أو احفظ بالاسم الأصلي.\n"
         "للإلغاء: /cancel",
-        reply_markup=kb_status(),
+        reply_markup=kb_status(item["token"]),
     )
 
 
@@ -270,7 +271,7 @@ async def _show_upload_folders(ctx, chat_id, item, folder_id=None, page=0, cq=No
     if quick and quick["id"] != folder["id"]:
         rows.append([InlineKeyboardButton(
             f"📌 مجلد الرفع الحالي: {quick['name'][:22]}",
-            callback_data=f"upset:{token}:{quick['id']}",
+            callback_data=f"upnav:{token}:{quick['id']}",
         )])
 
     for child in folders[page * page_size: (page + 1) * page_size]:
@@ -1200,17 +1201,6 @@ async def on_browser_button(update, ctx):
                 await show_browser(update, ctx, meta["id"])
             else:
                 await show_item(update, ctx, arg)
-        elif action == "upcancel_name":
-            queue = ctx.user_data.get("queue", [])
-            if not queue:
-                await cq.message.reply_text("ما في ملف ناطر.")
-                return
-            if queue[0].get("_uploading"):
-                await cq.message.reply_text("الرفع شغّال، ما فينا نلغيه.")
-                return
-            queue.pop(0)
-            await cq.message.reply_text("❌ ألغيت هالملف.")
-            await ask_next(ctx, cq.message.chat_id, ctx.user_data)
         elif action in ("skipone", "skipall"):
             queue = ctx.user_data.get("queue", [])
             if not queue:
@@ -1462,7 +1452,7 @@ app.add_handler(CommandHandler("skip", skip))
 app.add_handler(CommandHandler("skipall", skipall))
 app.add_handler(CommandHandler("cancel", cancel_command))
 app.add_handler(CallbackQueryHandler(on_upload_folder_button, pattern=r"^(upnav:|upset:|upfast:|upbatch:|upretry:|upcancel:|uppage:|upadd:)"))
-app.add_handler(CallbackQueryHandler(on_browser_button, pattern=r"^(home$|recent$|findprompt$|nav:|page:|item:|choose:|add:|trash:|confirm:|cancel:|skipone$|skipall$|upcancel_name$)"))
+app.add_handler(CallbackQueryHandler(on_browser_button, pattern=r"^(home$|recent$|findprompt$|nav:|page:|item:|choose:|add:|trash:|confirm:|cancel:|skipone$|skipall$)"))
 app.add_handler(CallbackQueryHandler(on_button, pattern=r"^(status|ren:)"))
 app.add_handler(MessageHandler(filters.Regex(f"^{re.escape(STATUS_BTN)}$"), status))
 app.add_handler(MessageHandler(filters.ATTACHMENT, on_file))
