@@ -11,7 +11,8 @@ Telegram bot saves any file sent to it into a Google Drive folder. Creates folde
 - Arabic reply keyboard: 📁 ملفاتي, ➕ مجلد جديد, 📤 رفع ملف, 📊 الحالة
 - Browse folders/files with inline buttons, select upload destination, create nested folders, rename, and move items to Google Drive Trash after confirmation
 - `/files` browse your managed files, `/newfolder <name>` create inside the selected folder and switch to it, `/folder` open the file browser
-- Selected upload folder is persisted in `drivebot.settings`, including across Render restarts
+- The upload picker opens in the last selected folder and shows folders only. "✅ احفظ بهالمجلد" saves there with one tap, and the selection is persisted in `drivebot.settings` across Render restarts.
+- The file browser has a shortcut to the active upload folder, plus folder rename, back/home navigation and file links
 - `/skip` and `/skipall` still work; file naming now also has inline buttons
 
 ## User folder security and deletion
