@@ -191,9 +191,9 @@ def kb_after_upload(file_id):
 
 def kb_status():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("الاسم الأصلي", callback_data="skipone"),
-         InlineKeyboardButton("الكل بأسمائه", callback_data="skipall")],
-        [InlineKeyboardButton(FILES_BTN, callback_data="home")],
+        [InlineKeyboardButton("⚡ حفظ بالاسم الأصلي", callback_data="skipone"),
+         InlineKeyboardButton("⚡ حفظ الباقي", callback_data="skipall")],
+        [InlineKeyboardButton("❌ إلغاء هالملف", callback_data="upcancel_name")],
     ])
 
 def status_text(ud, folder_name=None):
@@ -216,13 +216,14 @@ async def ask_next(ctx, chat_id, ud):
         return
     item = queue[0]
     if not item.get("target_folder"):
+        item["pending_count"] = len(queue)
         await _show_upload_folders(ctx, chat_id, item)
         return
     await ctx.bot.send_message(
         chat_id,
-        f"المجلد: {item['target_name']}\n"
-        f"شو بدك تسمي «{item['label']}»؟\n"
-        "اكتب الاسم أو اختار الاسم الأصلي.",
+        f"📁 {item['target_name']}\n"
+        f"✏️ اكتب اسم «{item['label']}» الجديد، أو احفظ بالاسم الأصلي.\n"
+        "للإلغاء: /cancel",
         reply_markup=kb_status(),
     )
 
@@ -290,10 +291,21 @@ async def _show_upload_folders(ctx, chat_id, item, folder_id=None, page=0, cq=No
         rows.append(pager)
 
     rows.append([InlineKeyboardButton(
-        "✅ احفظ بهالمجلد", callback_data=f"upset:{token}:{folder['id']}",
+        "⚡ حفظ بالاسم الأصلي", callback_data=f"upfast:{token}:{folder['id']}",
     )])
     rows.append([InlineKeyboardButton(
+        "✏️ تغيير الاسم قبل الحفظ", callback_data=f"upset:{token}:{folder['id']}",
+    )])
+    if item.get("pending_count", 1) > 1:
+        rows.append([InlineKeyboardButton(
+            f"⚡ حفظ كل الملفات هون ({item['pending_count']})",
+            callback_data=f"upbatch:{token}:{folder['id']}",
+        )])
+    rows.append([InlineKeyboardButton(
         "➕ مجلد جديد هون", callback_data=f"upadd:{token}:{folder['id']}",
+    )])
+    rows.append([InlineKeyboardButton(
+        "❌ إلغاء هالملف", callback_data=f"upcancel:{token}",
     )])
 
     path = " / ".join(breadcrumbs)
@@ -303,8 +315,8 @@ async def _show_upload_folders(ctx, chat_id, item, folder_id=None, page=0, cq=No
         f"وين بدك تحفظ «{item['label']}»؟\n"
         f"📍 {path}\n"
         f"📂 مجلدات: {len(folders)} | 📄 ملفات: {len(files)}\n\n"
-        + ("افتح المجلد اللي بدك ياه، وبعدها اضغط «احفظ بهالمجلد»."
-           if folders else "ما في مجلدات جوّا هون. فيك تحفظ هون أو تعمل مجلد جديد.")
+        + ("افتح المجلد لتشوف جوّاته. الحفظ بالمجلد المكتوب فوق."
+           if folders else "ما في مجلدات فرعية. احفظ هون أو أنشئ مجلد.")
         + ("\n(عم نعرض أول 1000 عنصر)" if more else "")
     )
     markup = InlineKeyboardMarkup(rows)
@@ -337,6 +349,7 @@ async def _finish_queued_file(ctx, chat_id, user_data, chosen_name):
     if item.get("_uploading"):
         return False
     item["_uploading"] = True
+    item["retry_name"] = chosen_name
     try:
         done = await upload_item(ctx, chat_id, user_data, item, chosen_name)
         if done:
@@ -356,36 +369,75 @@ async def on_upload_folder_button(update, ctx):
         return
     queue = ctx.user_data.get("queue", [])
     if not queue:
-        await cq.message.reply_text("ما في ملف ناطر اختيار مجلد.")
+        await cq.message.reply_text("ما في ملفات ناطرة.")
         return
     item = queue[0]
     parts = cq.data.split(":")
     action, token = parts[0], parts[1]
-    if str(item["token"]) != token or item["uid"] != update.effective_user.id or item.get("target_folder"):
-        await cq.message.reply_text("هالزر قديم. ابعت الملف مرة تانية إذا لزم.")
+    if str(item["token"]) != token or item["uid"] != update.effective_user.id:
+        await cq.message.reply_text("هالزر قديم. استعمل آخر رسالة من البوت.")
+        return
+    chat_id = cq.message.chat_id
+    ud = ctx.user_data
+    if action == "upcancel":
+        if item.get("_uploading"):
+            await cq.message.reply_text("الملف قيد الرفع، ما فينا نلغيه هلق.")
+            return
+        queue.pop(0)
+        ud.pop("creating_for_upload", None)
+        ud.pop("creating_folder_in", None)
+        try:
+            await cq.edit_message_text("❌ ألغيت هالملف من قائمة الانتظار.")
+        except BadRequest:
+            pass
+        await ask_next(ctx, chat_id, ud)
+        return
+    if action == "upretry":
+        if not item.get("target_folder"):
+            await cq.message.reply_text("اختار المجلد أولاً.")
+            return
+        if await _finish_queued_file(ctx, chat_id, ud, item.get("retry_name")):
+            await ask_next(ctx, chat_id, ud)
+        return
+    if item.get("target_folder"):
+        await cq.message.reply_text("هالاختيار صار قديم. استعمل آخر رسالة من البوت.")
         return
     uid, display = item["uid"], item["owner_name"]
     if action == "uppage":
         fid, page = parts[2], int(parts[3])
-        await _show_upload_folders(ctx, cq.message.chat_id, item, fid, page, cq)
+        await _show_upload_folders(ctx, chat_id, item, fid, page, cq)
     elif action == "upnav":
-        await _show_upload_folders(ctx, cq.message.chat_id, item, parts[2], 0, cq)
-    elif action == "upset":
+        await _show_upload_folders(ctx, chat_id, item, parts[2], 0, cq)
+    elif action in ("upset", "upfast", "upbatch"):
         selected = await _drive_call(USER_DRIVE.select, uid, parts[2], display)
         item["recent_target"] = selected
         item["target_folder"] = selected["id"]
         item["target_name"] = selected["name"]
         try:
-            await cq.edit_message_text(f"تمام، اخترت «{selected['name']}».")
+            await cq.edit_message_text(f"📁 المجلد: «{selected['name']}»")
         except BadRequest:
             pass
-        await ask_next(ctx, cq.message.chat_id, ctx.user_data)
+        if action == "upset":
+            await ask_next(ctx, chat_id, ud)
+        elif action == "upfast":
+            if await _finish_queued_file(ctx, chat_id, ud, None):
+                await ask_next(ctx, chat_id, ud)
+        else:
+            total = len(queue)
+            await cq.message.reply_text(f"⚡ عم احفظ {total} ملفات في «{selected['name']}».")
+            while queue:
+                pending = queue[0]
+                pending["target_folder"] = selected["id"]
+                pending["target_name"] = selected["name"]
+                if not await _finish_queued_file(ctx, chat_id, ud, None):
+                    return  # Failed file remains in queue with an explicit retry button.
+            await cq.message.reply_text(f"✅ انحفظت الملفات الـ {total} بنجاح.")
     elif action == "upadd":
         await _drive_call(USER_DRIVE.require_folder, uid, parts[2], display)
-        ctx.user_data.pop("renaming", None)
-        ctx.user_data["creating_folder_in"] = parts[2]
-        ctx.user_data["creating_for_upload"] = token
-        await cq.message.reply_text("شو بدك تسمي المجلد الجديد؟")
+        ud.pop("renaming", None)
+        ud["creating_folder_in"] = parts[2]
+        ud["creating_for_upload"] = token
+        await cq.message.reply_text("➕ اكتب اسم المجلد الجديد (أو /cancel للإلغاء):")
 
 # ---------- upload ----------
 def _format_eta(seconds):
@@ -558,6 +610,10 @@ async def upload_item(ctx, chat_id, ud, item, chosen_name):
             notice = "ما زبط الرفع هالمرة. جرّب مرة تانية."
         await _edit_upload_status(
             status_msg, f"{notice}\nالملف بعدها بالدور، ما بدك تبعته من جديد.",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("🔄 إعادة المحاولة",
+                                     callback_data=f"upretry:{item['token']}"),
+            ]]),
         )
         return False
     finally:
@@ -571,18 +627,13 @@ async def upload_item(ctx, chat_id, ud, item, chosen_name):
 # ---------- handlers ----------
 def _welcome_text():
     return (
-        "أهلاً فيك ببوت فريق Ctrl+Tea ☕\n\n"
-        "هون فيك تحفظ ملفاتك وفويسات المحاضرات على Google Drive، "
-        "وترتّبهن بمجلدات خاصة فيك.\n\n"
-        "طريقة الرفع:\n"
-        "1. ابعت الملف أو الفويس هون (مباشرة أو Forward).\n"
-        "2. اختار المجلد من الأزرار، أو اعمل مجلد جديد.\n"
-        "3. اكتب اسم للملف أو اختار «الاسم الأصلي».\n\n"
-        "رح تشوف تقدّم الرفع، وبخبرك لما ينحفظ الملف.\n"
-        "الفويس بينحفظ كملف صوتي بصيغته الأصلية؛ ما بيتحوّل لنص.\n\n"
+        "☕ أهلاً فيك ببوت Ctrl+Tea\n\n"
+        "احفظ ملفاتك والفويسات على Google Drive بمجلدات خاصة فيك.\n"
+        "📤 ابعت ملف أو فويس، اختار المجلد، واضغط «حفظ بالاسم الأصلي» "
+        "أو غيّر الاسم.\n"
+        "📁 من «ملفاتي» بتتصفّح المجلدات وبتوصل لروابط ملفاتك.\n\n"
         "— فريق Ctrl+Tea"
     )
-
 
 async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.effective_message.reply_text(
@@ -591,7 +642,19 @@ async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 
 async def help_command(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    await start(update, ctx)
+    await update.effective_message.reply_text(
+        "❓ طريقة الاستخدام\n\n"
+        "📤 ابعت ملف أو صورة أو فويس للبوت.\n"
+        "اختار المجلد، واضغط «⚡ حفظ بالاسم الأصلي»، أو غيّر الاسم قبل الرفع.\n"
+        "فيك تحفظ كل الملفات المنتظرة بنفس المجلد بضغطة.\n\n"
+        "📁 ملفاتي: افتح مجلداتك، اضغط على الملف لتشوف تفاصيله، "
+        "أو على 🔗 حتى تفتح رابطه مباشرة.\n"
+        "➕ لإنشاء مجلد، افتح المكان المطلوب واضغط «مجلد جديد».\n"
+        "🕘 آخر ملفاتي، 🔎 بحث عن ملف، /status للحالة.\n"
+        "للإلغاء: /cancel\n"
+        "الحذف بيحتاج تأكيد، والملفات بتنقل لسلة Drive.",
+        reply_markup=_menu_keyboard(update.effective_user.id),
+    )
 
 async def status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     person = update.effective_user
@@ -782,6 +845,30 @@ async def on_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if await _finish_queued_file(ctx, chat_id, ud, text):
         await ask_next(ctx, chat_id, ud)
 
+async def cancel_command(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Cancel current prompt or waiting item; never delete a Drive file."""
+    ud = ctx.user_data
+    if ud.pop("searching_files", False):
+        msg = "❌ ألغيت البحث."
+    elif ud.pop("renaming", None):
+        msg = "❌ ألغيت تغيير الاسم."
+    elif ud.pop("creating_folder_in", None):
+        ud.pop("creating_for_upload", None)
+        msg = "❌ ألغيت إنشاء المجلد."
+    elif ud.get("queue"):
+        if ud["queue"][0].get("_uploading"):
+            await update.effective_message.reply_text("الرفع شغّال. ما فينا نلغيه أثناء النقل.")
+            return
+        ud["queue"].pop(0)
+        await update.effective_message.reply_text(
+            "❌ ألغيت هالملف من الانتظار.", reply_markup=_menu_keyboard())
+        await ask_next(ctx, update.effective_chat.id, ud)
+        return
+    else:
+        msg = "ما في عملية ناطرة إلغاء."
+    await update.effective_message.reply_text(msg, reply_markup=_menu_keyboard())
+
+
 async def skip(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     queue = ctx.user_data.get("queue", [])
     if not queue:
@@ -826,8 +913,8 @@ async def on_button(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 # ---------- per-user browser ----------
 def _menu_keyboard(uid=None):
-    rows = [[FILES_BTN, RECENT_BTN], [SEARCH_BTN, NEW_FOLDER_BTN],
-            [UPLOAD_BTN, STATUS_BTN], [HELP_BTN]]
+    # Keep the persistent keyboard focused; contextual folder tools live inside the browser.
+    rows = [[FILES_BTN, UPLOAD_BTN], [RECENT_BTN, SEARCH_BTN], [HELP_BTN]]
     return ReplyKeyboardMarkup(rows, resize_keyboard=True)
 
 async def _drive_call(fn, *args):
@@ -860,7 +947,7 @@ def _item_button(label, verb, file_id):
     return InlineKeyboardButton(label, callback_data=payload)
 
 
-async def show_browser(update, ctx, folder_id=None, page=0):
+async def show_browser(update, ctx, folder_id=None, page=None):
     """Render the contents of one Drive folder inside a single Telegram message."""
     if not await _private_ui(update):
         return
@@ -870,7 +957,11 @@ async def show_browser(update, ctx, folder_id=None, page=0):
     )
     limit = 8
     total_pages = max(0, (len(items) - 1) // limit)
+    saved_pages = ctx.user_data.setdefault("browser_pages", {}) if ctx is not None else {}
+    if page is None:
+        page = saved_pages.get(folder["id"], 0)
     page = max(0, min(int(page), total_pages))
+    saved_pages[folder["id"]] = page
     rows = []
 
     # Keep navigation at the top so it is always easy to go up a level.
@@ -916,15 +1007,13 @@ async def show_browser(update, ctx, folder_id=None, page=0):
 
     rows.append([
         InlineKeyboardButton("➕ مجلد جديد", callback_data=f"add:{folder['id']}"),
-        InlineKeyboardButton("📌 الرفع هون", callback_data=f"choose:{folder['id']}"),
+        InlineKeyboardButton("📌 تعيين للرفع", callback_data=f"choose:{folder['id']}"),
     ])
     rows.append([
-        InlineKeyboardButton("🕘 آخر الملفات", callback_data="recent"),
+        InlineKeyboardButton("🕘 الأحدث", callback_data="recent"),
         InlineKeyboardButton("🔎 بحث", callback_data="findprompt"),
+        InlineKeyboardButton("🔄 تحديث", callback_data=f"nav:{folder['id']}"),
     ])
-    rows.append([InlineKeyboardButton(
-        "🔄 تحديث المحتوى", callback_data=f"nav:{folder['id']}",
-    )])
     if folder["id"] != root["id"]:
         rename = _item_button("✏️ تغيير اسم المجلد", "ren", folder["id"])
         deletion = _item_button("🗑 حذف المجلد", "trash", folder["id"])
@@ -937,11 +1026,11 @@ async def show_browser(update, ctx, folder_id=None, page=0):
     folder_count = sum(meta.get("mimeType") == FOLDER_MIME for meta in items)
     file_count = len(items) - folder_count
     summary = (
-        f"📍 {path}\n"
+        f"📁 {path}\n"
         f"📂 {folder_count} مجلدات  |  📄 {file_count} ملفات\n"
-        f"📌 مكان الرفع: {current.get('name', '')}\n\n"
-        + ("اضغط على المجلد لتشوف اللي جواه، أو على الملف لتاخد رابطه."
-           if items else "المجلد فاضي. ابعت ملف أو اعمل مجلد جديد.")
+        f"📌 الرفع حالياً: {current.get('name', '')}\n\n"
+        + ("افتح المجلدات، واضغط على اسم الملف للتفاصيل أو 🔗 للرابط."
+           if items else "ما في ملفات هون. فيك تعمل مجلد أو تبعت ملف.")
         + (f"\nصفحة {page + 1} من {total_pages + 1}" if total_pages else "")
         + ("\n(في عناصر إضافية ما ظهرت بالقائمة)" if more else "")
     )
@@ -976,7 +1065,8 @@ async def show_item(update, ctx, file_id):
         [InlineKeyboardButton("🔗 فتح على Drive", url=link)],
         [InlineKeyboardButton("✏️ تغيير الاسم", callback_data=f"ren:{file_id}"),
          InlineKeyboardButton("🗑 حذف", callback_data=f"trash:{file_id}")],
-        [InlineKeyboardButton("⬅️ رجوع", callback_data=f"nav:{parent}")],
+        [InlineKeyboardButton("⬅️ رجوع للمجلد", callback_data=f"nav:{parent}"),
+         InlineKeyboardButton("🏠 ملفاتي", callback_data="home")],
     ])
     if update.callback_query:
         try:
@@ -1035,8 +1125,9 @@ async def upload_help(update, ctx):
     person = update.effective_user
     active = await _drive_call(USER_DRIVE.current, person.id, person.full_name)
     await update.effective_message.reply_text(
-        f"📤 ابعت الملف هون، ورح يفتحلك «{active['name']}» أول شي.\n"
-        "فيك تحفظ فيه فوراً، أو تتنقّل لمجلد تاني. اختيارك بينحفظ للملف الجاي.", reply_markup=_menu_keyboard(person.id),
+        f"📤 ابعت الملف أو الفويس هون.\n"
+        f"📁 مجلد الرفع الحالي: «{active['name']}»\n"
+        "بعد الإرسال اضغط «⚡ حفظ بالاسم الأصلي»، أو غيّر المجلد والاسم.", reply_markup=_menu_keyboard(person.id),
     )
 
 
@@ -1062,7 +1153,7 @@ async def on_browser_button(update, ctx):
     try:
         if action == "home":
             root = await _drive_call(USER_DRIVE.ensure_root, uid, display)
-            await show_browser(update, ctx, root["id"])
+            await show_browser(update, ctx, root["id"], 0)
         elif action == "recent":
             await _show_file_results(update, ctx)
         elif action == "findprompt":
@@ -1077,7 +1168,6 @@ async def on_browser_button(update, ctx):
             await show_item(update, ctx, arg)
         elif action == "choose":
             selected = await _drive_call(USER_DRIVE.select, uid, arg, display)
-            await cq.message.reply_text(f"تمام، الرفع الجديد رح يروح على «{selected['name']}».")
             await show_browser(update, ctx, selected["id"])
         elif action == "add":
             await _drive_call(USER_DRIVE.require_folder, uid, arg, display)
@@ -1110,6 +1200,17 @@ async def on_browser_button(update, ctx):
                 await show_browser(update, ctx, meta["id"])
             else:
                 await show_item(update, ctx, arg)
+        elif action == "upcancel_name":
+            queue = ctx.user_data.get("queue", [])
+            if not queue:
+                await cq.message.reply_text("ما في ملف ناطر.")
+                return
+            if queue[0].get("_uploading"):
+                await cq.message.reply_text("الرفع شغّال، ما فينا نلغيه.")
+                return
+            queue.pop(0)
+            await cq.message.reply_text("❌ ألغيت هالملف.")
+            await ask_next(ctx, cq.message.chat_id, ctx.user_data)
         elif action in ("skipone", "skipall"):
             queue = ctx.user_data.get("queue", [])
             if not queue:
@@ -1359,8 +1460,9 @@ app.add_handler(CommandHandler("recent", recent_command))
 app.add_handler(CommandHandler("find", search_command))
 app.add_handler(CommandHandler("skip", skip))
 app.add_handler(CommandHandler("skipall", skipall))
-app.add_handler(CallbackQueryHandler(on_upload_folder_button, pattern=r"^(upnav:|upset:|uppage:|upadd:)"))
-app.add_handler(CallbackQueryHandler(on_browser_button, pattern=r"^(home$|recent$|findprompt$|nav:|page:|item:|choose:|add:|trash:|confirm:|cancel:|skipone$|skipall$)"))
+app.add_handler(CommandHandler("cancel", cancel_command))
+app.add_handler(CallbackQueryHandler(on_upload_folder_button, pattern=r"^(upnav:|upset:|upfast:|upbatch:|upretry:|upcancel:|uppage:|upadd:)"))
+app.add_handler(CallbackQueryHandler(on_browser_button, pattern=r"^(home$|recent$|findprompt$|nav:|page:|item:|choose:|add:|trash:|confirm:|cancel:|skipone$|skipall$|upcancel_name$)"))
 app.add_handler(CallbackQueryHandler(on_button, pattern=r"^(status|ren:)"))
 app.add_handler(MessageHandler(filters.Regex(f"^{re.escape(STATUS_BTN)}$"), status))
 app.add_handler(MessageHandler(filters.ATTACHMENT, on_file))
