@@ -82,7 +82,7 @@ class UploadFlowTests(unittest.IsolatedAsyncioTestCase):
         await self.ns["ask_next"](ctx, 77, {"queue": [item]})
         self.ns["_show_upload_folders"].assert_not_awaited()
         args, kwargs = ctx.bot.send_message.await_args
-        self.assertIn("شو بدك تسمي", args[1])
+        self.assertIn("اكتب اسم", args[1])
         self.assertEqual(kwargs["reply_markup"], "buttons")
 
     async def test_failed_upload_stays_in_queue(self):
@@ -204,6 +204,18 @@ class UploadFlowTests(unittest.IsolatedAsyncioTestCase):
         await self.ns["on_upload_folder_button"](update, ctx)
         self.assertEqual(ud["queue"], [])
         self.ns["ask_next"].assert_awaited_once()
+
+    async def test_one_tap_original_name_from_naming_prompt_uses_token(self):
+        self.ns["_safe_callback_answer"] = AsyncMock(return_value=True)
+        self.ns["_private_ui"] = AsyncMock(return_value=True)
+        self.ns["_finish_queued_file"] = AsyncMock(return_value=True)
+        self.ns["ask_next"] = AsyncMock()
+        item = self._item(folder="active")
+        item["retry_name"] = "Old custom name"
+        update, ctx, _, _ = self._callback("upnamefast:42", item=item)
+        await self.ns["on_upload_folder_button"](update, ctx)
+        self.ns["_finish_queued_file"].assert_awaited_once_with(
+            ctx, 77, ctx.user_data, None)
 
     async def test_retry_keeps_chosen_name_and_does_not_reask_folder(self):
         self.ns["_safe_callback_answer"] = AsyncMock(return_value=True)
