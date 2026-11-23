@@ -233,6 +233,10 @@ class FileExperienceTests(unittest.IsolatedAsyncioTestCase):
         markup = self.ns["kb_status"]("42")
         self.assertTrue(any(x.callback_data == "upcancel:42"
                             for row in markup.rows for x in row))
+        self.assertTrue(any(x.callback_data == "upnamefast:42"
+                            for row in markup.rows for x in row))
+        self.assertFalse(any(x.callback_data == "skipall"
+                             for row in markup.rows for x in row))
         self.assertFalse(any(x.callback_data == "upcancel:43"
                              for row in markup.rows for x in row))
         generic = self.ns["kb_status"]()
