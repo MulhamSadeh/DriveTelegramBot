@@ -190,12 +190,16 @@ def kb_after_upload(file_id):
 
 
 def kb_status(token=None):
-    rows = [[InlineKeyboardButton("⚡ حفظ بالاسم الأصلي", callback_data="skipone"),
-             InlineKeyboardButton("⚡ حفظ الباقي", callback_data="skipall")]]
-    if token is not None:
-        rows.append([InlineKeyboardButton("❌ إلغاء هالملف",
-                                          callback_data=f"upcancel:{token}")])
-    return InlineKeyboardMarkup(rows)
+    if token is None:
+        return InlineKeyboardMarkup([[
+            InlineKeyboardButton(FILES_BTN, callback_data="home"),
+        ]])
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("⚡ حفظ بالاسم الأصلي",
+                              callback_data=f"upnamefast:{token}")],
+        [InlineKeyboardButton("❌ إلغاء هالملف",
+                              callback_data=f"upcancel:{token}")],
+    ])
 
 def status_text(ud, folder_name=None):
     qd = ud.get("queue", [])
@@ -393,11 +397,12 @@ async def on_upload_folder_button(update, ctx):
             pass
         await ask_next(ctx, chat_id, ud)
         return
-    if action == "upretry":
+    if action in ("upretry", "upnamefast"):
         if not item.get("target_folder"):
             await cq.message.reply_text("اختار المجلد أولاً.")
             return
-        if await _finish_queued_file(ctx, chat_id, ud, item.get("retry_name")):
+        name = item.get("retry_name") if action == "upretry" else None
+        if await _finish_queued_file(ctx, chat_id, ud, name):
             await ask_next(ctx, chat_id, ud)
         return
     if item.get("target_folder"):
@@ -1451,7 +1456,7 @@ app.add_handler(CommandHandler("find", search_command))
 app.add_handler(CommandHandler("skip", skip))
 app.add_handler(CommandHandler("skipall", skipall))
 app.add_handler(CommandHandler("cancel", cancel_command))
-app.add_handler(CallbackQueryHandler(on_upload_folder_button, pattern=r"^(upnav:|upset:|upfast:|upbatch:|upretry:|upcancel:|uppage:|upadd:)"))
+app.add_handler(CallbackQueryHandler(on_upload_folder_button, pattern=r"^(upnav:|upset:|upfast:|upbatch:|upretry:|upnamefast:|upcancel:|uppage:|upadd:)"))
 app.add_handler(CallbackQueryHandler(on_browser_button, pattern=r"^(home$|recent$|findprompt$|nav:|page:|item:|choose:|add:|trash:|confirm:|cancel:|skipone$|skipall$)"))
 app.add_handler(CallbackQueryHandler(on_button, pattern=r"^(status|ren:)"))
 app.add_handler(MessageHandler(filters.Regex(f"^{re.escape(STATUS_BTN)}$"), status))
