@@ -55,15 +55,9 @@ class FileExperienceTests(unittest.IsolatedAsyncioTestCase):
         }
         load_functions("bot.py", MODULES["bot.py"], self.ns)
 
-    async def test_telegram_keyboard_has_search_and_recent_without_admin(self):
+    async def test_home_keyboard_has_only_upload_and_files(self):
         markup = self.ns["_menu_keyboard"](12345)
-        words = " ".join(str(item) for row in markup.rows for item in row)
-        self.assertIn("بحث عن ملف", words)
-        self.assertIn("آخر ملفاتي", words)
-        self.assertNotIn("أدمن", words)
-        self.assertNotIn("📊 الحالة", words)
-        self.assertNotIn("➕ مجلد جديد", words)
-        self.assertEqual(len(markup.rows), 3)
+        self.assertEqual(markup.rows, [[self.ns["UPLOAD_BTN"], self.ns["FILES_BTN"]]])
 
     async def test_file_details_have_permanent_link_and_open_button(self):
         file_id = "file_id_ABC123"
@@ -175,8 +169,7 @@ class FileExperienceTests(unittest.IsolatedAsyncioTestCase):
         await self.ns["_show_upload_folders"](ctx, 77, item, folder_id="sub", cq=cq)
         text, kwargs = cq.edit_message_text.await_args
         self.assertIn("ملفاتي / محاضرات", text[0])
-        self.assertIn("مجلدات: 1", text[0])
-        self.assertIn("ملفات: 1", text[0])
+        self.assertIn("٢ من ٢", text[0])
         rows = kwargs["reply_markup"].rows
         self.assertTrue(any(x.callback_data == "upnav:42:subsub" for row in rows for x in row))
         self.assertFalse(any(x.callback_data == "upset:42:subsub" for row in rows for x in row))
