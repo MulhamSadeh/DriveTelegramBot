@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 ROOT = Path(__file__).resolve().parents[1]
 MODULES = {
     "bot.py": {
-        "drive_file_url", "show_item", "_show_file_results", "_menu_keyboard",
+        "drive_file_url", "show_item", "_show_file_results", "_menu_keyboard", "kb_status",
         "_upload_folder_snapshot", "_browser_snapshot", "show_browser", "_show_upload_folders",
     },
 }
@@ -61,6 +61,9 @@ class FileExperienceTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("بحث عن ملف", words)
         self.assertIn("آخر ملفاتي", words)
         self.assertNotIn("أدمن", words)
+        self.assertNotIn("📊 الحالة", words)
+        self.assertNotIn("➕ مجلد جديد", words)
+        self.assertEqual(len(markup.rows), 3)
 
     async def test_file_details_have_permanent_link_and_open_button(self):
         file_id = "file_id_ABC123"
@@ -224,6 +227,72 @@ class FileExperienceTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("nav:active", actions)
         self.assertIn("ren:other", actions)
         self.assertIn("trash:other", actions)
+
+
+    async def test_name_cancel_button_is_bound_to_file_token(self):
+        markup = self.ns["kb_status"]("42")
+        self.assertTrue(any(x.callback_data == "upcancel:42"
+                            for row in markup.rows for x in row))
+        self.assertTrue(any(x.callback_data == "upnamefast:42"
+                            for row in markup.rows for x in row))
+        self.assertFalse(any(x.callback_data == "skipall"
+                             for row in markup.rows for x in row))
+        self.assertFalse(any(x.callback_data == "upcancel:43"
+                             for row in markup.rows for x in row))
+        generic = self.ns["kb_status"]()
+        self.assertFalse(any(x.callback_data and x.callback_data.startswith("upcancel:")
+                             for row in generic.rows for x in row))
+
+    async def test_picker_has_fast_save_bulk_and_cancel(self):
+        root = {"id": "root", "name": "ملفاتي"}
+        folder = {"id": "active", "name": "فويسات", "parents": ["root"]}
+        self.ns["_drive_call"] = AsyncMock(return_value=(
+            root, folder, [], [], False, ["ملفاتي", "فويسات"],
+        ))
+        self.ns["BadRequest"] = Exception
+        cq = SimpleNamespace(edit_message_text=AsyncMock())
+        ctx = SimpleNamespace(bot=SimpleNamespace(send_message=AsyncMock()))
+        item = {
+            "token": "42", "label": "file.ogg", "uid": 123,
+            "owner_name": "Student", "pending_count": 3,
+        }
+        await self.ns["_show_upload_folders"](ctx, 77, item, folder_id="active", cq=cq)
+        buttons = [x.callback_data for row in
+                   cq.edit_message_text.await_args.kwargs["reply_markup"].rows for x in row]
+        self.assertIn("upfast:42:active", buttons)
+        self.assertIn("upset:42:active", buttons)
+        self.assertIn("upbatch:42:active", buttons)
+        self.assertIn("upcancel:42", buttons)
+
+    async def test_browser_remembers_last_page_when_returning_from_file(self):
+        root = {"id": "root", "name": "ملفاتي"}
+        folder = {"id": "sub", "name": "محاضرات", "parents": ["root"]}
+        contents = [
+            {"id": f"f{i}", "name": f"item{i}.pdf", "mimeType": "application/pdf"}
+            for i in range(12)
+        ]
+        self.ns["_private_ui"] = AsyncMock(return_value=True)
+        self.ns["_drive_call"] = AsyncMock(return_value=(
+            root, folder, {"id": "sub", "name": "محاضرات"},
+            contents, False, ["ملفاتي", "محاضرات"],
+        ))
+        self.ns["_item_button"] = lambda text, action, ident: Button(
+            text, callback_data=f"{action}:{ident}")
+        self.ns["BadRequest"] = Exception
+        query = SimpleNamespace(edit_message_text=AsyncMock())
+        ctx = SimpleNamespace(user_data={"browser_pages": {"sub": 1}})
+        update = SimpleNamespace(
+            callback_query=query,
+            effective_user=SimpleNamespace(id=123, full_name="Student"),
+            effective_message=SimpleNamespace(reply_text=AsyncMock()),
+        )
+        await self.ns["show_browser"](update, ctx, "sub")
+        summary, kwargs = query.edit_message_text.await_args
+        self.assertIn("صفحة 2 من 2", summary[0])
+        self.assertEqual(ctx.user_data["browser_pages"]["sub"], 1)
+        actions = [x.callback_data for row in kwargs["reply_markup"].rows for x in row]
+        self.assertIn("item:f8", actions)
+        self.assertNotIn("item:f0", actions)
 
 if __name__ == "__main__":
     unittest.main()
